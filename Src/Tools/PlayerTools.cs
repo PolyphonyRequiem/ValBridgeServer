@@ -26,6 +26,94 @@ namespace ValBridgeServer.Tools
             };
         }
 
+        [Tool("get_player_state", Description = "Get a full snapshot of the player: health, stamina, position, biome, equipped weapon, status effects, and food buffs.")]
+        public object GetPlayerState()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var pos = player.transform.position;
+            var lookDir = player.GetLookDir();
+
+            // Status effects
+            var effects = player.GetSEMan().GetStatusEffects();
+            var effectList = effects.Select(se => new
+            {
+                name = se.m_name,
+                timeRemaining = se.m_ttl > 0 ? (float?)Math.Round(se.GetRemaningTime(), 1) : null
+            }).ToList();
+
+            // Food
+            var foods = player.GetFoods();
+            var foodList = foods.Select(f => new
+            {
+                name = f.m_name,
+                health = (float)Math.Round(f.m_health, 1),
+                stamina = (float)Math.Round(f.m_stamina, 1),
+                timeRemaining = (float)Math.Round(f.m_time, 1)
+            }).ToList();
+
+            // Equipped weapon
+            var weapon = player.GetCurrentWeapon();
+            object? weaponInfo = null;
+            if (weapon != null && weapon.m_dropPrefab != null)
+            {
+                weaponInfo = new
+                {
+                    name = weapon.m_dropPrefab.name,
+                    durability = (float)Math.Round(weapon.GetDurabilityPercentage() * 100f, 1)
+                };
+            }
+
+            return new
+            {
+                success = true,
+                health = (float)Math.Round(player.GetHealth(), 1),
+                maxHealth = (float)Math.Round(player.GetMaxHealth(), 1),
+                stamina = (float)Math.Round(player.GetStamina(), 1),
+                maxStamina = (float)Math.Round(player.GetMaxStamina(), 1),
+                position = new { x = pos.x, y = pos.y, z = pos.z },
+                lookDirection = new { x = lookDir.x, y = lookDir.y, z = lookDir.z },
+                biome = player.GetCurrentBiome().ToString(),
+                weapon = weaponInfo,
+                statusEffects = effectList,
+                foods = foodList
+            };
+        }
+
+        [Tool("get_inventory", Description = "List all items in the player's inventory with name, quantity, slot, equipped status, and durability.")]
+        public object GetInventory()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var inv = player.GetInventory();
+            var items = inv.GetAllItems();
+
+            var itemList = items.Select(item => new
+            {
+                name = item.m_dropPrefab?.name ?? item.m_shared.m_name,
+                quantity = item.m_stack,
+                slot = new { x = item.m_gridPos.x, y = item.m_gridPos.y },
+                equipped = item.m_equipped,
+                durability = item.m_shared.m_maxDurability > 0
+                    ? (float?)Math.Round(item.GetDurabilityPercentage() * 100f, 1)
+                    : null,
+                type = item.m_shared.m_itemType.ToString()
+            }).ToList();
+
+            return new
+            {
+                success = true,
+                count = itemList.Count,
+                totalWeight = (float)Math.Round(inv.GetTotalWeight(), 1),
+                emptySlots = inv.GetEmptySlots(),
+                items = itemList
+            };
+        }
+
         [Tool("player_get_position", Description = "Get player's world position coordinates")]
         public object GetPosition()
         {
