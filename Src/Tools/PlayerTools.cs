@@ -249,6 +249,108 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("look_at_position", Description = "Face the player toward a world position (XZ plane).")]
+        public object LookAtPosition(
+            [ToolParameter(Description = "X coordinate to look at")] float x,
+            [ToolParameter(Description = "Z coordinate to look at")] float z)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var pos = player.transform.position;
+                    var dir = new Vector3(x - pos.x, 0f, z - pos.z);
+                    if (dir.magnitude < 0.01f)
+                    {
+                        tcs.SetResult(new { success = false, error = "Target position is too close to player" });
+                        return;
+                    }
+                    dir.Normalize();
+                    player.SetLookDir(dir);
+                    player.FaceLookDirection();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Now facing ({x:F1}, {z:F1})"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("look_at_object", Description = "Face the player toward a specific object by instanceId.")]
+        public object LookAtObject(
+            [ToolParameter(Description = "Instance ID of the target object (from find_nearby_prefabs or get_visible_objects)")] int instanceId)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, 100f);
+                    var seen = new HashSet<int>();
+                    GameObject? target = null;
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+                        var root = col.gameObject.transform.root.gameObject;
+                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
+                        {
+                            target = root;
+                            break;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No GameObject found with instanceId {instanceId} within range" });
+                        return;
+                    }
+
+                    var dir = target.transform.position - playerPos;
+                    dir.y = 0f;
+                    if (dir.magnitude < 0.01f)
+                    {
+                        tcs.SetResult(new { success = false, error = "Target is too close to player" });
+                        return;
+                    }
+                    dir.Normalize();
+                    player.SetLookDir(dir);
+                    player.FaceLookDirection();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Now facing {target.name}",
+                        targetPosition = new { x = target.transform.position.x, y = target.transform.position.y, z = target.transform.position.z }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
