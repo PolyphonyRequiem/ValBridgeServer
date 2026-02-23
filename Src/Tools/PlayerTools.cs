@@ -539,6 +539,177 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("equip_item", Description = "Equip an item from inventory by name.")]
+        public object EquipItem(
+            [ToolParameter(Description = "Item name to equip (prefab name, e.g. 'SwordBronze', 'ShieldWood')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No item matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var result = player.EquipItem(item);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Equipped {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot equip (in combat, broken, or already equipped)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("unequip_item", Description = "Unequip a currently equipped item by name.")]
+        public object UnequipItem(
+            [ToolParameter(Description = "Item name to unequip (prefab name, e.g. 'SwordBronze')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetEquippedItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No equipped item matching '{itemName}' found" });
+                        return;
+                    }
+
+                    player.UnequipItem(item);
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Unequipped {item.m_dropPrefab?.name ?? item.m_shared.m_name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("use_item", Description = "Consume a food or potion item from inventory by name.")]
+        public object UseItem(
+            [ToolParameter(Description = "Item name to consume (prefab name, e.g. 'CookedMeat', 'MeadHealthMinor')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        i.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Consumable &&
+                        ((i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                         i.m_shared.m_name.ToLowerInvariant().Contains(filter)));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No consumable matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var result = player.ConsumeItem(inv, item);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Consumed {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot consume (food slots full or already active)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("drop_item", Description = "Drop an item from inventory into the world.")]
+        public object DropItem(
+            [ToolParameter(Description = "Item name to drop (prefab name)")] string itemName,
+            [ToolParameter(Description = "Number to drop (default 1, use -1 for entire stack)")] int amount = 1)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No item matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var dropAmount = amount < 0 ? item.m_stack : Math.Min(amount, item.m_stack);
+                    var result = player.DropItem(inv, item, dropAmount);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Dropped {dropAmount}x {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot drop (quest item)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
