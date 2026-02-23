@@ -439,6 +439,106 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("interact", Description = "Interact with the object the player is looking at (E key). Opens doors, picks up items, activates crafting stations, etc.")]
+        public object Interact(
+            [ToolParameter(Description = "Hold interact instead of tap (default false)")] bool hold = false)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var hover = player.GetHoverObject();
+                    if (hover == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "Nothing in range to interact with" });
+                        return;
+                    }
+
+                    var interactable = hover.GetComponentInParent<Interactable>();
+                    if (interactable == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"Object '{hover.name}' is not interactable" });
+                        return;
+                    }
+
+                    var result = interactable.Interact(player, hold, false);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Interacted with {hover.name}" : $"Interaction with {hover.name} failed",
+                        target = hover.name
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("pickup_nearby", Description = "Pick up loose item drops within range of the player.")]
+        public object PickupNearby(
+            [ToolParameter(Description = "Pickup radius in meters (default 5)")] float range = 5f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var origin = player.transform.position + Vector3.up;
+                    var colliders = Physics.OverlapSphere(origin, range, LayerMask.GetMask("item"));
+                    var pickedUp = new List<string>();
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null || col.attachedRigidbody == null) continue;
+
+                        var itemDrop = col.attachedRigidbody.GetComponent<ItemDrop>();
+                        if (itemDrop == null) continue;
+
+                        var znv = itemDrop.GetComponent<ZNetView>();
+                        if (znv == null || !znv.IsValid()) continue;
+
+                        itemDrop.Load();
+                        if (player.GetInventory().CanAddItem(itemDrop.m_itemData))
+                        {
+                            if (player.Pickup(itemDrop.gameObject, true, false))
+                            {
+                                pickedUp.Add(itemDrop.m_itemData.m_dropPrefab?.name ?? itemDrop.m_itemData.m_shared.m_name);
+                            }
+                        }
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        pickedUpCount = pickedUp.Count,
+                        items = pickedUp,
+                        message = pickedUp.Count > 0 ? $"Picked up {pickedUp.Count} items" : "No items to pick up"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,

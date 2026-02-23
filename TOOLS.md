@@ -30,6 +30,8 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `look_at_object` | Look | Face toward an object by instanceId |
 | `get_player_state` | State | Full snapshot: health, stamina, biome, weapon, effects, food |
 | `get_inventory` | State | All items with name, quantity, slot, equipped, durability |
+| `interact` | Interaction | Press E on hovered object |
+| `pickup_nearby` | Interaction | Pick up loose items within range |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -152,7 +154,7 @@ Repair an item at the nearest station.
 2. ~~**Combat** — `primary_attack`, `secondary_attack`, `block`~~ DONE
 3. ~~**Look** — `look_at_position`, `look_at_object`~~ DONE
 4. ~~**State** — `get_player_state`, `get_inventory`~~ DONE
-5. **Interaction** — `interact`, `pickup_nearby`
+5. ~~**Interaction** — `interact`, `pickup_nearby`~~ DONE
 6. **Equipment** — `equip_item`, `unequip_item`, `use_item`, `drop_item`
 7. **Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`
 8. **Building & Crafting** — lower priority, complex placement/station systems
