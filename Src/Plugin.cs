@@ -92,6 +92,10 @@ namespace ValBridgeServer
                 _server.Events.RegisterChannel("player/death", "Player death events");
                 _server.Events.RegisterChannel("player/health_changed", "Player health change events");
 
+                // Ensure manager singletons are created on the main thread
+                var _ = NavigationManager.Instance;
+                var __ = AttackManager.Instance;
+
                 // Start listening for GABS connections
                 _server.StartAsync().ContinueWith(task =>
                 {
