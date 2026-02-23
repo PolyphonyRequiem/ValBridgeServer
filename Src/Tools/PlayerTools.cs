@@ -26,6 +26,94 @@ namespace ValBridgeServer.Tools
             };
         }
 
+        [Tool("get_player_state", Description = "Get a full snapshot of the player: health, stamina, position, biome, equipped weapon, status effects, and food buffs.")]
+        public object GetPlayerState()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var pos = player.transform.position;
+            var lookDir = player.GetLookDir();
+
+            // Status effects
+            var effects = player.GetSEMan().GetStatusEffects();
+            var effectList = effects.Select(se => new
+            {
+                name = se.m_name,
+                timeRemaining = se.m_ttl > 0 ? (float?)Math.Round(se.GetRemaningTime(), 1) : null
+            }).ToList();
+
+            // Food
+            var foods = player.GetFoods();
+            var foodList = foods.Select(f => new
+            {
+                name = f.m_name,
+                health = (float)Math.Round(f.m_health, 1),
+                stamina = (float)Math.Round(f.m_stamina, 1),
+                timeRemaining = (float)Math.Round(f.m_time, 1)
+            }).ToList();
+
+            // Equipped weapon
+            var weapon = player.GetCurrentWeapon();
+            object? weaponInfo = null;
+            if (weapon != null && weapon.m_dropPrefab != null)
+            {
+                weaponInfo = new
+                {
+                    name = weapon.m_dropPrefab.name,
+                    durability = (float)Math.Round(weapon.GetDurabilityPercentage() * 100f, 1)
+                };
+            }
+
+            return new
+            {
+                success = true,
+                health = (float)Math.Round(player.GetHealth(), 1),
+                maxHealth = (float)Math.Round(player.GetMaxHealth(), 1),
+                stamina = (float)Math.Round(player.GetStamina(), 1),
+                maxStamina = (float)Math.Round(player.GetMaxStamina(), 1),
+                position = new { x = pos.x, y = pos.y, z = pos.z },
+                lookDirection = new { x = lookDir.x, y = lookDir.y, z = lookDir.z },
+                biome = player.GetCurrentBiome().ToString(),
+                weapon = weaponInfo,
+                statusEffects = effectList,
+                foods = foodList
+            };
+        }
+
+        [Tool("get_inventory", Description = "List all items in the player's inventory with name, quantity, slot, equipped status, and durability.")]
+        public object GetInventory()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var inv = player.GetInventory();
+            var items = inv.GetAllItems();
+
+            var itemList = items.Select(item => new
+            {
+                name = item.m_dropPrefab?.name ?? item.m_shared.m_name,
+                quantity = item.m_stack,
+                slot = new { x = item.m_gridPos.x, y = item.m_gridPos.y },
+                equipped = item.m_equipped,
+                durability = item.m_shared.m_maxDurability > 0
+                    ? (float?)Math.Round(item.GetDurabilityPercentage() * 100f, 1)
+                    : null,
+                type = item.m_shared.m_itemType.ToString()
+            }).ToList();
+
+            return new
+            {
+                success = true,
+                count = itemList.Count,
+                totalWeight = (float)Math.Round(inv.GetTotalWeight(), 1),
+                emptySlots = inv.GetEmptySlots(),
+                items = itemList
+            };
+        }
+
         [Tool("player_get_position", Description = "Get player's world position coordinates")]
         public object GetPosition()
         {
@@ -39,6 +127,1015 @@ namespace ValBridgeServer.Tools
                 success = true,
                 position = new { x = pos.x, y = pos.y, z = pos.z }
             };
+        }
+
+        [Tool("get_visible_objects", Description = "Get objects visible to the player using camera frustum and line-of-sight raycasting. Returns what the player can actually see.")]
+        public object GetVisibleObjects(
+            [ToolParameter(Description = "Max distance to check (default 50)")] float range = 50f,
+            [ToolParameter(Description = "Max objects to return (default 25)")] int limit = 25)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var cam = Camera.main;
+                    if (cam == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No main camera found" });
+                        return;
+                    }
+
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, range);
+                    var seen = new HashSet<int>();
+                    var results = new List<(float dist, object data)>();
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+
+                        var go = col.gameObject;
+                        var root = go.transform.root.gameObject;
+
+                        var id = root.GetInstanceID();
+                        if (!seen.Add(id)) continue;
+
+                        // Skip the player themselves
+                        if (root == player.gameObject) continue;
+
+                        var objPos = root.transform.position;
+
+                        // Check if object is within camera frustum
+                        var viewportPoint = cam.WorldToViewportPoint(objPos);
+                        if (viewportPoint.z < 0f || viewportPoint.x < 0f || viewportPoint.x > 1f || viewportPoint.y < 0f || viewportPoint.y > 1f)
+                            continue;
+
+                        // Raycast from camera to object to check line-of-sight
+                        var camPos = cam.transform.position;
+                        var dir = objPos - camPos;
+                        var dist = dir.magnitude;
+                        if (Physics.Raycast(camPos, dir.normalized, out var hit, dist))
+                        {
+                            // Check if we hit the target object or one of its children
+                            if (hit.collider.gameObject.transform.root.gameObject != root)
+                                continue; // Occluded by something else
+                        }
+
+                        var objDist = Vector3.Distance(playerPos, objPos);
+
+                        // Detect type
+                        string? type = null;
+                        if (root.GetComponent<TreeBase>() != null)
+                            type = "TreeBase";
+                        else if (root.GetComponent<Destructible>() != null)
+                            type = "Destructible";
+                        else if (root.GetComponent<TreeLog>() != null)
+                            type = "TreeLog";
+                        else if (root.GetComponent<MineRock>() != null)
+                            type = "MineRock";
+                        else if (root.GetComponent<Character>() != null)
+                            type = "Character";
+                        else if (root.GetComponent<Piece>() != null)
+                            type = "Piece";
+                        else if (root.GetComponent<ItemDrop>() != null)
+                            type = "ItemDrop";
+
+                        results.Add((objDist, new
+                        {
+                            name = root.name,
+                            instanceId = id,
+                            type,
+                            position = new { x = objPos.x, y = objPos.y, z = objPos.z },
+                            distance = (float)Math.Round(objDist, 2),
+                            screenPosition = new { x = (float)Math.Round(viewportPoint.x, 3), y = (float)Math.Round(viewportPoint.y, 3) }
+                        }));
+                    }
+
+                    var sorted = results
+                        .OrderBy(r => r.dist)
+                        .Take(limit)
+                        .Select(r => r.data)
+                        .ToList();
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        count = sorted.Count,
+                        playerPosition = new { x = playerPos.x, y = playerPos.y, z = playerPos.z },
+                        cameraForward = new { x = cam.transform.forward.x, y = cam.transform.forward.y, z = cam.transform.forward.z },
+                        range,
+                        objects = sorted
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("primary_attack", Description = "Perform a single primary attack (left click) with the current weapon. Returns immediately after starting the attack.")]
+        public object PrimaryAttack()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var result = player.StartAttack(null, false);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? "Primary attack started" : "Cannot attack (no weapon, mid-animation, or stunned)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("secondary_attack", Description = "Perform a single secondary attack (right click) with the current weapon. Alt-attack, parry, or special depending on weapon.")]
+        public object SecondaryAttack()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var result = player.StartAttack(null, true);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? "Secondary attack started" : "Cannot attack (no weapon, no secondary attack, mid-animation, or stunned)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("block", Description = "Start or stop blocking with the current shield/weapon. Blocking within 0.25s of an incoming hit triggers a parry.")]
+        public object Block(
+            [ToolParameter(Description = "true to start blocking, false to stop")] bool active)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    player.SetControls(
+                        Vector3.zero,
+                        attack: false, attackHold: false,
+                        secondaryAttack: false, secondaryAttackHold: false,
+                        block: false, blockHold: active,
+                        jump: false, crouch: false, run: false, autoRun: false);
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = active ? "Blocking started" : "Blocking stopped",
+                        isBlocking = player.IsBlocking()
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("look_at_position", Description = "Face the player toward a world position (XZ plane).")]
+        public object LookAtPosition(
+            [ToolParameter(Description = "X coordinate to look at")] float x,
+            [ToolParameter(Description = "Z coordinate to look at")] float z)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var pos = player.transform.position;
+                    var dir = new Vector3(x - pos.x, 0f, z - pos.z);
+                    if (dir.magnitude < 0.01f)
+                    {
+                        tcs.SetResult(new { success = false, error = "Target position is too close to player" });
+                        return;
+                    }
+                    dir.Normalize();
+                    player.SetLookDir(dir);
+                    player.FaceLookDirection();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Now facing ({x:F1}, {z:F1})"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("look_at_object", Description = "Face the player toward a specific object by instanceId.")]
+        public object LookAtObject(
+            [ToolParameter(Description = "Instance ID of the target object (from find_nearby_prefabs or get_visible_objects)")] int instanceId)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, 100f);
+                    var seen = new HashSet<int>();
+                    GameObject? target = null;
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+                        var root = col.gameObject.transform.root.gameObject;
+                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
+                        {
+                            target = root;
+                            break;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No GameObject found with instanceId {instanceId} within range" });
+                        return;
+                    }
+
+                    var dir = target.transform.position - playerPos;
+                    dir.y = 0f;
+                    if (dir.magnitude < 0.01f)
+                    {
+                        tcs.SetResult(new { success = false, error = "Target is too close to player" });
+                        return;
+                    }
+                    dir.Normalize();
+                    player.SetLookDir(dir);
+                    player.FaceLookDirection();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Now facing {target.name}",
+                        targetPosition = new { x = target.transform.position.x, y = target.transform.position.y, z = target.transform.position.z }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("interact", Description = "Interact with the object the player is looking at (E key). Opens doors, picks up items, activates crafting stations, etc.")]
+        public object Interact(
+            [ToolParameter(Description = "Hold interact instead of tap (default false)")] bool hold = false)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var hover = player.GetHoverObject();
+                    if (hover == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "Nothing in range to interact with" });
+                        return;
+                    }
+
+                    var interactable = hover.GetComponentInParent<Interactable>();
+                    if (interactable == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"Object '{hover.name}' is not interactable" });
+                        return;
+                    }
+
+                    var result = interactable.Interact(player, hold, false);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Interacted with {hover.name}" : $"Interaction with {hover.name} failed",
+                        target = hover.name
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("pickup_nearby", Description = "Pick up loose item drops within range of the player.")]
+        public object PickupNearby(
+            [ToolParameter(Description = "Pickup radius in meters (default 5)")] float range = 5f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var origin = player.transform.position + Vector3.up;
+                    var colliders = Physics.OverlapSphere(origin, range, LayerMask.GetMask("item"));
+                    var pickedUp = new List<string>();
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null || col.attachedRigidbody == null) continue;
+
+                        var itemDrop = col.attachedRigidbody.GetComponent<ItemDrop>();
+                        if (itemDrop == null) continue;
+
+                        var znv = itemDrop.GetComponent<ZNetView>();
+                        if (znv == null || !znv.IsValid()) continue;
+
+                        itemDrop.Load();
+                        if (player.GetInventory().CanAddItem(itemDrop.m_itemData))
+                        {
+                            if (player.Pickup(itemDrop.gameObject, true, false))
+                            {
+                                pickedUp.Add(itemDrop.m_itemData.m_dropPrefab?.name ?? itemDrop.m_itemData.m_shared.m_name);
+                            }
+                        }
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        pickedUpCount = pickedUp.Count,
+                        items = pickedUp,
+                        message = pickedUp.Count > 0 ? $"Picked up {pickedUp.Count} items" : "No items to pick up"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("equip_item", Description = "Equip an item from inventory by name.")]
+        public object EquipItem(
+            [ToolParameter(Description = "Item name to equip (prefab name, e.g. 'SwordBronze', 'ShieldWood')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No item matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var result = player.EquipItem(item);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Equipped {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot equip (in combat, broken, or already equipped)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("unequip_item", Description = "Unequip a currently equipped item by name.")]
+        public object UnequipItem(
+            [ToolParameter(Description = "Item name to unequip (prefab name, e.g. 'SwordBronze')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetEquippedItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No equipped item matching '{itemName}' found" });
+                        return;
+                    }
+
+                    player.UnequipItem(item);
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Unequipped {item.m_dropPrefab?.name ?? item.m_shared.m_name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("use_item", Description = "Consume a food or potion item from inventory by name.")]
+        public object UseItem(
+            [ToolParameter(Description = "Item name to consume (prefab name, e.g. 'CookedMeat', 'MeadHealthMinor')")] string itemName)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        i.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Consumable &&
+                        ((i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                         i.m_shared.m_name.ToLowerInvariant().Contains(filter)));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No consumable matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var result = player.ConsumeItem(inv, item);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Consumed {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot consume (food slots full or already active)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("drop_item", Description = "Drop an item from inventory into the world.")]
+        public object DropItem(
+            [ToolParameter(Description = "Item name to drop (prefab name)")] string itemName,
+            [ToolParameter(Description = "Number to drop (default 1, use -1 for entire stack)")] int amount = 1)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    var filter = itemName.ToLowerInvariant();
+                    var item = inv.GetAllItems().FirstOrDefault(i =>
+                        (i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                        i.m_shared.m_name.ToLowerInvariant().Contains(filter));
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No item matching '{itemName}' found in inventory" });
+                        return;
+                    }
+
+                    var dropAmount = amount < 0 ? item.m_stack : Math.Min(amount, item.m_stack);
+                    var result = player.DropItem(inv, item, dropAmount);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? $"Dropped {dropAmount}x {item.m_dropPrefab?.name ?? item.m_shared.m_name}" : "Cannot drop (quest item)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("move_direction", Description = "Move the player in a world-space direction for a duration. Use forward/back/left/right relative to current look direction, or provide explicit X/Z.")]
+        public object MoveDirection(
+            [ToolParameter(Description = "X component of direction (east/west)")] float x = 0f,
+            [ToolParameter(Description = "Z component of direction (north/south)")] float z = 0f,
+            [ToolParameter(Description = "Duration in seconds (default 1)")] float duration = 1f,
+            [ToolParameter(Description = "Run instead of walk (default false)")] bool run = false)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var dir = new Vector3(x, 0f, z);
+            if (dir.magnitude < 0.01f)
+                return new { success = false, error = "Direction vector is zero" };
+
+            var task = MovementManager.Instance.StartMoving(dir, run, duration);
+            return task.Result;
+        }
+
+        [Tool("jump", Description = "Make the player jump. Set move direction first for a directional jump.")]
+        public object Jump()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    player.Jump();
+                    tcs.SetResult(new { success = true, message = "Jump initiated" });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("dodge", Description = "Dodge roll in a direction. Costs stamina and grants brief invincibility.")]
+        public object Dodge(
+            [ToolParameter(Description = "X component of dodge direction")] float x = 0f,
+            [ToolParameter(Description = "Z component of dodge direction")] float z = 0f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var dir = new Vector3(x, 0f, z);
+                    if (dir.magnitude < 0.01f)
+                        dir = -player.GetLookDir(); // default: dodge backward
+
+                    dir.Normalize();
+                    player.SetMoveDir(dir);
+                    player.SetControls(
+                        dir,
+                        attack: false, attackHold: false,
+                        secondaryAttack: false, secondaryAttackHold: false,
+                        block: true, blockHold: true,
+                        jump: true,
+                        crouch: false, run: false, autoRun: false);
+
+                    tcs.SetResult(new { success = true, message = "Dodge initiated" });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("set_crouch", Description = "Toggle crouching/sneaking on or off.")]
+        public object SetCrouch(
+            [ToolParameter(Description = "true to crouch, false to stand")] bool active)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var isCrouching = player.IsCrouching();
+                    if (active != isCrouching)
+                    {
+                        // SetControls with crouch=true toggles the state
+                        player.SetControls(
+                            Vector3.zero,
+                            attack: false, attackHold: false,
+                            secondaryAttack: false, secondaryAttackHold: false,
+                            block: false, blockHold: false,
+                            jump: false, crouch: true,
+                            run: false, autoRun: false);
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = active ? "Now crouching" : "Stopped crouching",
+                        isCrouching = active
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("get_available_recipes", Description = "List recipes the player can craft at their current location. Shows required materials and station.")]
+        public object GetAvailableRecipes()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var recipes = new List<Recipe>();
+                    player.GetAvailableRecipes(ref recipes);
+
+                    var station = player.GetCurrentCraftingStation();
+                    var recipeList = recipes.Select(r => new
+                    {
+                        name = r.m_item.gameObject.name,
+                        amount = r.m_amount,
+                        station = r.m_craftingStation?.m_name,
+                        minStationLevel = r.m_minStationLevel,
+                        resources = r.m_resources.Where(req => req.m_resItem != null).Select(req => new
+                        {
+                            item = req.m_resItem.gameObject.name,
+                            amount = req.GetAmount(1)
+                        }).ToList(),
+                        canCraft = player.HaveRequirements(r, false, 1)
+                    }).ToList();
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        currentStation = station?.m_name,
+                        stationLevel = station?.GetLevel(),
+                        count = recipeList.Count,
+                        recipes = recipeList
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("craft_item", Description = "Craft an item by name at the current crafting station (or by hand if no station needed).")]
+        public object CraftItem(
+            [ToolParameter(Description = "Item name to craft (prefab name, e.g. 'SwordBronze', 'ArrowWood')")] string itemName,
+            [ToolParameter(Description = "Number of times to craft (default 1)")] int count = 1)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var recipes = new List<Recipe>();
+                    player.GetAvailableRecipes(ref recipes);
+
+                    var filter = itemName.ToLowerInvariant();
+                    var recipe = recipes.FirstOrDefault(r =>
+                        r.m_item.gameObject.name.ToLowerInvariant().Contains(filter));
+
+                    if (recipe == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No available recipe matching '{itemName}'" });
+                        return;
+                    }
+
+                    int crafted = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (!player.HaveRequirements(recipe, false, 1))
+                            break;
+
+                        var inv = player.GetInventory();
+                        if (inv.AddItem(recipe.m_item.gameObject.name, recipe.m_amount, 1, 0,
+                                player.GetPlayerID(), player.GetPlayerName()) != null)
+                        {
+                            player.ConsumeResources(recipe.m_resources, 1);
+                            crafted++;
+                        }
+                        else
+                            break; // inventory full
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = crafted > 0,
+                        message = crafted > 0
+                            ? $"Crafted {crafted}x {recipe.m_item.gameObject.name} ({recipe.m_amount * crafted} items)"
+                            : "Cannot craft (missing materials or inventory full)",
+                        crafted
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("repair_item", Description = "Repair an item in inventory that has reduced durability. Requires a nearby crafting station.")]
+        public object RepairItem(
+            [ToolParameter(Description = "Item name to repair (prefab name). If empty, repairs the first damaged item.")] string itemName = "")
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    ItemDrop.ItemData? item = null;
+
+                    if (!string.IsNullOrEmpty(itemName))
+                    {
+                        var filter = itemName.ToLowerInvariant();
+                        item = inv.GetAllItems().FirstOrDefault(i =>
+                            i.m_shared.m_useDurability &&
+                            i.m_durability < i.GetMaxDurability() &&
+                            ((i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                             i.m_shared.m_name.ToLowerInvariant().Contains(filter)));
+                    }
+                    else
+                    {
+                        item = inv.GetAllItems().FirstOrDefault(i =>
+                            i.m_shared.m_useDurability &&
+                            i.m_durability < i.GetMaxDurability());
+                    }
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No damaged item found to repair" });
+                        return;
+                    }
+
+                    item.m_durability = item.GetMaxDurability();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Repaired {item.m_dropPrefab?.name ?? item.m_shared.m_name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("place_piece", Description = "Place a building piece at a position. Requires hammer equipped and appropriate crafting station nearby.")]
+        public object PlacePiece(
+            [ToolParameter(Description = "Piece prefab name (e.g. 'wood_wall', 'wood_floor')")] string pieceName,
+            [ToolParameter(Description = "X position")] float x,
+            [ToolParameter(Description = "Y position")] float y,
+            [ToolParameter(Description = "Z position")] float z,
+            [ToolParameter(Description = "Y rotation in degrees (default 0)")] float rotation = 0f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var buildPieces = player.m_buildPieces;
+                    if (buildPieces == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No build piece table active (equip a hammer first)" });
+                        return;
+                    }
+
+                    var filter = pieceName.ToLowerInvariant();
+                    Piece? piece = null;
+
+                    foreach (var go in buildPieces.m_pieces)
+                    {
+                        if (go == null) continue;
+                        var p = go.GetComponent<Piece>();
+                        if (p != null && go.name.ToLowerInvariant().Contains(filter))
+                        {
+                            piece = p;
+                            break;
+                        }
+                    }
+
+                    if (piece == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No building piece matching '{pieceName}'" });
+                        return;
+                    }
+
+                    var pos = new Vector3(x, y, z);
+                    var rot = Quaternion.Euler(0f, rotation, 0f);
+
+                    player.PlacePiece(piece, pos, rot);
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Placed {piece.gameObject.name} at ({x:F1}, {y:F1}, {z:F1})"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("remove_piece", Description = "Demolish a building piece by instanceId. Returns some materials.")]
+        public object RemovePiece(
+            [ToolParameter(Description = "Instance ID of the piece to remove")] int instanceId)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, 50f);
+                    var seen = new HashSet<int>();
+                    GameObject? target = null;
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+                        var root = col.gameObject.transform.root.gameObject;
+                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
+                        {
+                            target = root;
+                            break;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No object found with instanceId {instanceId}" });
+                        return;
+                    }
+
+                    var piece = target.GetComponent<Piece>();
+                    if (piece == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "Object is not a building piece" });
+                        return;
+                    }
+
+                    if (!piece.m_canBeRemoved)
+                    {
+                        tcs.SetResult(new { success = false, error = "This piece cannot be removed" });
+                        return;
+                    }
+
+                    var wnt = target.GetComponent<WearNTear>();
+                    if (wnt != null)
+                        wnt.Remove();
+                    else
+                        ZNetScene.instance.Destroy(target);
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Removed {piece.gameObject.name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
         }
 
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
@@ -121,57 +1218,6 @@ namespace ValBridgeServer.Tools
                         range,
                         prefabs = sorted
                     });
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetResult(new { success = false, error = ex.Message });
-                }
-            });
-
-            return tcs.Task.Result;
-        }
-
-        [Tool("attack_target", Description = "Attack a target with the current weapon until destroyed. Use find_nearby_prefabs to get instanceId.")]
-        public object AttackTarget(
-            [ToolParameter(Description = "Instance ID of the target GameObject (from find_nearby_prefabs)")] int instanceId,
-            [ToolParameter(Description = "Timeout in seconds (default 30)")] float timeout = 30f)
-        {
-            var player = Player.m_localPlayer;
-            if (player == null)
-                return new { success = false, error = "No local player found" };
-
-            var tcs = new TaskCompletionSource<object>();
-
-            MainThreadDispatcher.Instance.Enqueue(() =>
-            {
-                try
-                {
-                    // Find the target GameObject by instance ID using physics overlap
-                    var playerPos = player.transform.position;
-                    var colliders = Physics.OverlapSphere(playerPos, 100f);
-                    var seen = new HashSet<int>();
-                    GameObject? target = null;
-
-                    foreach (var col in colliders)
-                    {
-                        if (col == null) continue;
-                        var root = col.gameObject.transform.root.gameObject;
-                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
-                        {
-                            target = root;
-                            break;
-                        }
-                    }
-
-                    if (target == null)
-                    {
-                        tcs.SetResult(new { success = false, error = $"No GameObject found with instanceId {instanceId} within range" });
-                        return;
-                    }
-
-                    // Start attacking on the main thread, then bridge the result
-                    var attackTask = AttackManager.Instance.StartAttacking(target, timeout);
-                    attackTask.ContinueWith(t => tcs.TrySetResult(t.Result));
                 }
                 catch (Exception ex)
                 {

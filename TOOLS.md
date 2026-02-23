@@ -21,7 +21,29 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `player_get_position` | Perception | World position coordinates |
 | `find_nearby_prefabs` | Perception | Physics overlap sphere search by name |
 | `navigate_to_position` | Compound | Pathfind and walk to a world position |
-| `attack_target` | Compound | Repeatedly attack until target destroyed |
+| `get_visible_objects` | Perception | Camera frustum + raycast visibility check |
+| `primary_attack` | Combat | Single primary attack (left click) |
+| `secondary_attack` | Combat | Single secondary attack (right click) |
+| `block` | Combat | Start/stop blocking (parry if timed within 0.25s) |
+| `look_at_position` | Look | Face toward a world coordinate |
+| `look_at_object` | Look | Face toward an object by instanceId |
+| `get_player_state` | State | Full snapshot: health, stamina, biome, weapon, effects, food |
+| `get_inventory` | State | All items with name, quantity, slot, equipped, durability |
+| `interact` | Interaction | Press E on hovered object |
+| `pickup_nearby` | Interaction | Pick up loose items within range |
+| `equip_item` | Equipment | Equip item from inventory by name |
+| `unequip_item` | Equipment | Unequip currently equipped item by name |
+| `use_item` | Equipment | Consume food/potion by name |
+| `drop_item` | Equipment | Drop item into world |
+| `move_direction` | Movement | Walk/run in world-space direction for duration |
+| `jump` | Movement | Single jump input |
+| `dodge` | Movement | Dodge roll in direction (i-frames) |
+| `set_crouch` | Movement | Toggle crouch/sneak on or off |
+| `get_available_recipes` | Crafting | List craftable recipes at current station |
+| `craft_item` | Crafting | Craft item by name, consumes materials |
+| `repair_item` | Crafting | Repair damaged inventory item |
+| `place_piece` | Building | Place building piece at position/rotation |
+| `remove_piece` | Building | Demolish building piece by instanceId |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -140,14 +162,14 @@ Repair an item at the nearest station.
 
 ## Implementation Priority
 
-1. **Vision** — `get_visible_objects` (foundational for all decision-making)
-2. **Combat** — `primary_attack`, `secondary_attack`, `block`
-3. **Look** — `look_at_position`, `look_at_object`
-4. **State** — `get_player_state`, `get_inventory`
-5. **Interaction** — `interact`, `pickup_nearby`
-6. **Equipment** — `equip_item`, `unequip_item`, `use_item`, `drop_item`
-7. **Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`
-8. **Building & Crafting** — lower priority, complex placement/station systems
+1. ~~**Vision** — `get_visible_objects` (foundational for all decision-making)~~ DONE
+2. ~~**Combat** — `primary_attack`, `secondary_attack`, `block`~~ DONE
+3. ~~**Look** — `look_at_position`, `look_at_object`~~ DONE
+4. ~~**State** — `get_player_state`, `get_inventory`~~ DONE
+5. ~~**Interaction** — `interact`, `pickup_nearby`~~ DONE
+6. ~~**Equipment** — `equip_item`, `unequip_item`, `use_item`, `drop_item`~~ DONE
+7. ~~**Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`~~ DONE
+8. ~~**Building & Crafting** — `get_available_recipes`, `craft_item`, `repair_item`, `place_piece`, `remove_piece`~~ DONE
 
 ## Future Work
 
