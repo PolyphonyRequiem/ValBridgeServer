@@ -1228,57 +1228,6 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
-        [Tool("attack_target", Description = "Attack a target with the current weapon until destroyed. Use find_nearby_prefabs to get instanceId.")]
-        public object AttackTarget(
-            [ToolParameter(Description = "Instance ID of the target GameObject (from find_nearby_prefabs)")] int instanceId,
-            [ToolParameter(Description = "Timeout in seconds (default 30)")] float timeout = 30f)
-        {
-            var player = Player.m_localPlayer;
-            if (player == null)
-                return new { success = false, error = "No local player found" };
-
-            var tcs = new TaskCompletionSource<object>();
-
-            MainThreadDispatcher.Instance.Enqueue(() =>
-            {
-                try
-                {
-                    // Find the target GameObject by instance ID using physics overlap
-                    var playerPos = player.transform.position;
-                    var colliders = Physics.OverlapSphere(playerPos, 100f);
-                    var seen = new HashSet<int>();
-                    GameObject? target = null;
-
-                    foreach (var col in colliders)
-                    {
-                        if (col == null) continue;
-                        var root = col.gameObject.transform.root.gameObject;
-                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
-                        {
-                            target = root;
-                            break;
-                        }
-                    }
-
-                    if (target == null)
-                    {
-                        tcs.SetResult(new { success = false, error = $"No GameObject found with instanceId {instanceId} within range" });
-                        return;
-                    }
-
-                    // Start attacking on the main thread, then bridge the result
-                    var attackTask = AttackManager.Instance.StartAttacking(target, timeout);
-                    attackTask.ContinueWith(t => tcs.TrySetResult(t.Result));
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetResult(new { success = false, error = ex.Message });
-                }
-            });
-
-            return tcs.Task.Result;
-        }
-
         [Tool("navigate_to_position", Description = "Walk the player to a world position using pathfinding. Returns when arrived or on failure.")]
         public object NavigateToPosition(
             [ToolParameter(Description = "X coordinate")] float x,

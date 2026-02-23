@@ -21,7 +21,6 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `player_get_position` | Perception | World position coordinates |
 | `find_nearby_prefabs` | Perception | Physics overlap sphere search by name |
 | `navigate_to_position` | Compound | Pathfind and walk to a world position |
-| `attack_target` | Compound | Repeatedly attack until target destroyed |
 | `get_visible_objects` | Perception | Camera frustum + raycast visibility check |
 | `primary_attack` | Combat | Single primary attack (left click) |
 | `secondary_attack` | Combat | Single secondary attack (right click) |
