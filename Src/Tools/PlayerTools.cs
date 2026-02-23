@@ -41,6 +41,119 @@ namespace ValBridgeServer.Tools
             };
         }
 
+        [Tool("get_visible_objects", Description = "Get objects visible to the player using camera frustum and line-of-sight raycasting. Returns what the player can actually see.")]
+        public object GetVisibleObjects(
+            [ToolParameter(Description = "Max distance to check (default 50)")] float range = 50f,
+            [ToolParameter(Description = "Max objects to return (default 25)")] int limit = 25)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var cam = Camera.main;
+                    if (cam == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No main camera found" });
+                        return;
+                    }
+
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, range);
+                    var seen = new HashSet<int>();
+                    var results = new List<(float dist, object data)>();
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+
+                        var go = col.gameObject;
+                        var root = go.transform.root.gameObject;
+
+                        var id = root.GetInstanceID();
+                        if (!seen.Add(id)) continue;
+
+                        // Skip the player themselves
+                        if (root == player.gameObject) continue;
+
+                        var objPos = root.transform.position;
+
+                        // Check if object is within camera frustum
+                        var viewportPoint = cam.WorldToViewportPoint(objPos);
+                        if (viewportPoint.z < 0f || viewportPoint.x < 0f || viewportPoint.x > 1f || viewportPoint.y < 0f || viewportPoint.y > 1f)
+                            continue;
+
+                        // Raycast from camera to object to check line-of-sight
+                        var camPos = cam.transform.position;
+                        var dir = objPos - camPos;
+                        var dist = dir.magnitude;
+                        if (Physics.Raycast(camPos, dir.normalized, out var hit, dist))
+                        {
+                            // Check if we hit the target object or one of its children
+                            if (hit.collider.gameObject.transform.root.gameObject != root)
+                                continue; // Occluded by something else
+                        }
+
+                        var objDist = Vector3.Distance(playerPos, objPos);
+
+                        // Detect type
+                        string? type = null;
+                        if (root.GetComponent<TreeBase>() != null)
+                            type = "TreeBase";
+                        else if (root.GetComponent<Destructible>() != null)
+                            type = "Destructible";
+                        else if (root.GetComponent<TreeLog>() != null)
+                            type = "TreeLog";
+                        else if (root.GetComponent<MineRock>() != null)
+                            type = "MineRock";
+                        else if (root.GetComponent<Character>() != null)
+                            type = "Character";
+                        else if (root.GetComponent<Piece>() != null)
+                            type = "Piece";
+                        else if (root.GetComponent<ItemDrop>() != null)
+                            type = "ItemDrop";
+
+                        results.Add((objDist, new
+                        {
+                            name = root.name,
+                            instanceId = id,
+                            type,
+                            position = new { x = objPos.x, y = objPos.y, z = objPos.z },
+                            distance = (float)Math.Round(objDist, 2),
+                            screenPosition = new { x = (float)Math.Round(viewportPoint.x, 3), y = (float)Math.Round(viewportPoint.y, 3) }
+                        }));
+                    }
+
+                    var sorted = results
+                        .OrderBy(r => r.dist)
+                        .Take(limit)
+                        .Select(r => r.data)
+                        .ToList();
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        count = sorted.Count,
+                        playerPosition = new { x = playerPos.x, y = playerPos.y, z = playerPos.z },
+                        cameraForward = new { x = cam.transform.forward.x, y = cam.transform.forward.y, z = cam.transform.forward.z },
+                        range,
+                        objects = sorted
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,

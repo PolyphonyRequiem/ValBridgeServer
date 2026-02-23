@@ -22,6 +22,7 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `find_nearby_prefabs` | Perception | Physics overlap sphere search by name |
 | `navigate_to_position` | Compound | Pathfind and walk to a world position |
 | `attack_target` | Compound | Repeatedly attack until target destroyed |
+| `get_visible_objects` | Perception | Camera frustum + raycast visibility check |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -140,7 +141,7 @@ Repair an item at the nearest station.
 
 ## Implementation Priority
 
-1. **Vision** — `get_visible_objects` (foundational for all decision-making)
+1. ~~**Vision** — `get_visible_objects` (foundational for all decision-making)~~ DONE
 2. **Combat** — `primary_attack`, `secondary_attack`, `block`
 3. **Look** — `look_at_position`, `look_at_object`
 4. **State** — `get_player_state`, `get_inventory`
