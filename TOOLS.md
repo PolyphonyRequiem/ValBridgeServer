@@ -23,6 +23,9 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `navigate_to_position` | Compound | Pathfind and walk to a world position |
 | `attack_target` | Compound | Repeatedly attack until target destroyed |
 | `get_visible_objects` | Perception | Camera frustum + raycast visibility check |
+| `primary_attack` | Combat | Single primary attack (left click) |
+| `secondary_attack` | Combat | Single secondary attack (right click) |
+| `block` | Combat | Start/stop blocking (parry if timed within 0.25s) |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -142,7 +145,7 @@ Repair an item at the nearest station.
 ## Implementation Priority
 
 1. ~~**Vision** — `get_visible_objects` (foundational for all decision-making)~~ DONE
-2. **Combat** — `primary_attack`, `secondary_attack`, `block`
+2. ~~**Combat** — `primary_attack`, `secondary_attack`, `block`~~ DONE
 3. **Look** — `look_at_position`, `look_at_object`
 4. **State** — `get_player_state`, `get_inventory`
 5. **Interaction** — `interact`, `pickup_nearby`

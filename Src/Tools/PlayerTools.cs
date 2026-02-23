@@ -154,6 +154,101 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("primary_attack", Description = "Perform a single primary attack (left click) with the current weapon. Returns immediately after starting the attack.")]
+        public object PrimaryAttack()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var result = player.StartAttack(null, false);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? "Primary attack started" : "Cannot attack (no weapon, mid-animation, or stunned)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("secondary_attack", Description = "Perform a single secondary attack (right click) with the current weapon. Alt-attack, parry, or special depending on weapon.")]
+        public object SecondaryAttack()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var result = player.StartAttack(null, true);
+                    tcs.SetResult(new
+                    {
+                        success = result,
+                        message = result ? "Secondary attack started" : "Cannot attack (no weapon, no secondary attack, mid-animation, or stunned)"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("block", Description = "Start or stop blocking with the current shield/weapon. Blocking within 0.25s of an incoming hit triggers a parry.")]
+        public object Block(
+            [ToolParameter(Description = "true to start blocking, false to stop")] bool active)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    player.SetControls(
+                        Vector3.zero,
+                        attack: false, attackHold: false,
+                        secondaryAttack: false, secondaryAttackHold: false,
+                        block: false, blockHold: active,
+                        jump: false, crouch: false, run: false, autoRun: false);
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = active ? "Blocking started" : "Blocking stopped",
+                        isBlocking = player.IsBlocking()
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
