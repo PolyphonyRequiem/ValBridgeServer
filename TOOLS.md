@@ -40,6 +40,11 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `jump` | Movement | Single jump input |
 | `dodge` | Movement | Dodge roll in direction (i-frames) |
 | `set_crouch` | Movement | Toggle crouch/sneak on or off |
+| `get_available_recipes` | Crafting | List craftable recipes at current station |
+| `craft_item` | Crafting | Craft item by name, consumes materials |
+| `repair_item` | Crafting | Repair damaged inventory item |
+| `place_piece` | Building | Place building piece at position/rotation |
+| `remove_piece` | Building | Demolish building piece by instanceId |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -165,7 +170,7 @@ Repair an item at the nearest station.
 5. ~~**Interaction** — `interact`, `pickup_nearby`~~ DONE
 6. ~~**Equipment** — `equip_item`, `unequip_item`, `use_item`, `drop_item`~~ DONE
 7. ~~**Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`~~ DONE
-8. **Building & Crafting** — lower priority, complex placement/station systems
+8. ~~**Building & Crafting** — `get_available_recipes`, `craft_item`, `repair_item`, `place_piece`, `remove_piece`~~ DONE
 
 ## Future Work
 

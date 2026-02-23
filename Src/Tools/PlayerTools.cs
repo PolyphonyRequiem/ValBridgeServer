@@ -837,6 +837,307 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("get_available_recipes", Description = "List recipes the player can craft at their current location. Shows required materials and station.")]
+        public object GetAvailableRecipes()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var recipes = new List<Recipe>();
+                    player.GetAvailableRecipes(ref recipes);
+
+                    var station = player.GetCurrentCraftingStation();
+                    var recipeList = recipes.Select(r => new
+                    {
+                        name = r.m_item.gameObject.name,
+                        amount = r.m_amount,
+                        station = r.m_craftingStation?.m_name,
+                        minStationLevel = r.m_minStationLevel,
+                        resources = r.m_resources.Where(req => req.m_resItem != null).Select(req => new
+                        {
+                            item = req.m_resItem.gameObject.name,
+                            amount = req.GetAmount(1)
+                        }).ToList(),
+                        canCraft = player.HaveRequirements(r, false, 1)
+                    }).ToList();
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        currentStation = station?.m_name,
+                        stationLevel = station?.GetLevel(),
+                        count = recipeList.Count,
+                        recipes = recipeList
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("craft_item", Description = "Craft an item by name at the current crafting station (or by hand if no station needed).")]
+        public object CraftItem(
+            [ToolParameter(Description = "Item name to craft (prefab name, e.g. 'SwordBronze', 'ArrowWood')")] string itemName,
+            [ToolParameter(Description = "Number of times to craft (default 1)")] int count = 1)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var recipes = new List<Recipe>();
+                    player.GetAvailableRecipes(ref recipes);
+
+                    var filter = itemName.ToLowerInvariant();
+                    var recipe = recipes.FirstOrDefault(r =>
+                        r.m_item.gameObject.name.ToLowerInvariant().Contains(filter));
+
+                    if (recipe == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No available recipe matching '{itemName}'" });
+                        return;
+                    }
+
+                    int crafted = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (!player.HaveRequirements(recipe, false, 1))
+                            break;
+
+                        var inv = player.GetInventory();
+                        if (inv.AddItem(recipe.m_item.gameObject.name, recipe.m_amount, 1, 0,
+                                player.GetPlayerID(), player.GetPlayerName()) != null)
+                        {
+                            player.ConsumeResources(recipe.m_resources, 1);
+                            crafted++;
+                        }
+                        else
+                            break; // inventory full
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = crafted > 0,
+                        message = crafted > 0
+                            ? $"Crafted {crafted}x {recipe.m_item.gameObject.name} ({recipe.m_amount * crafted} items)"
+                            : "Cannot craft (missing materials or inventory full)",
+                        crafted
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("repair_item", Description = "Repair an item in inventory that has reduced durability. Requires a nearby crafting station.")]
+        public object RepairItem(
+            [ToolParameter(Description = "Item name to repair (prefab name). If empty, repairs the first damaged item.")] string itemName = "")
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var inv = player.GetInventory();
+                    ItemDrop.ItemData? item = null;
+
+                    if (!string.IsNullOrEmpty(itemName))
+                    {
+                        var filter = itemName.ToLowerInvariant();
+                        item = inv.GetAllItems().FirstOrDefault(i =>
+                            i.m_shared.m_useDurability &&
+                            i.m_durability < i.GetMaxDurability() &&
+                            ((i.m_dropPrefab?.name?.ToLowerInvariant().Contains(filter) ?? false) ||
+                             i.m_shared.m_name.ToLowerInvariant().Contains(filter)));
+                    }
+                    else
+                    {
+                        item = inv.GetAllItems().FirstOrDefault(i =>
+                            i.m_shared.m_useDurability &&
+                            i.m_durability < i.GetMaxDurability());
+                    }
+
+                    if (item == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No damaged item found to repair" });
+                        return;
+                    }
+
+                    item.m_durability = item.GetMaxDurability();
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Repaired {item.m_dropPrefab?.name ?? item.m_shared.m_name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("place_piece", Description = "Place a building piece at a position. Requires hammer equipped and appropriate crafting station nearby.")]
+        public object PlacePiece(
+            [ToolParameter(Description = "Piece prefab name (e.g. 'wood_wall', 'wood_floor')")] string pieceName,
+            [ToolParameter(Description = "X position")] float x,
+            [ToolParameter(Description = "Y position")] float y,
+            [ToolParameter(Description = "Z position")] float z,
+            [ToolParameter(Description = "Y rotation in degrees (default 0)")] float rotation = 0f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var buildPieces = player.m_buildPieces;
+                    if (buildPieces == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "No build piece table active (equip a hammer first)" });
+                        return;
+                    }
+
+                    var filter = pieceName.ToLowerInvariant();
+                    Piece? piece = null;
+
+                    foreach (var go in buildPieces.m_pieces)
+                    {
+                        if (go == null) continue;
+                        var p = go.GetComponent<Piece>();
+                        if (p != null && go.name.ToLowerInvariant().Contains(filter))
+                        {
+                            piece = p;
+                            break;
+                        }
+                    }
+
+                    if (piece == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No building piece matching '{pieceName}'" });
+                        return;
+                    }
+
+                    var pos = new Vector3(x, y, z);
+                    var rot = Quaternion.Euler(0f, rotation, 0f);
+
+                    player.PlacePiece(piece, pos, rot);
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Placed {piece.gameObject.name} at ({x:F1}, {y:F1}, {z:F1})"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("remove_piece", Description = "Demolish a building piece by instanceId. Returns some materials.")]
+        public object RemovePiece(
+            [ToolParameter(Description = "Instance ID of the piece to remove")] int instanceId)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, 50f);
+                    var seen = new HashSet<int>();
+                    GameObject? target = null;
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+                        var root = col.gameObject.transform.root.gameObject;
+                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
+                        {
+                            target = root;
+                            break;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No object found with instanceId {instanceId}" });
+                        return;
+                    }
+
+                    var piece = target.GetComponent<Piece>();
+                    if (piece == null)
+                    {
+                        tcs.SetResult(new { success = false, error = "Object is not a building piece" });
+                        return;
+                    }
+
+                    if (!piece.m_canBeRemoved)
+                    {
+                        tcs.SetResult(new { success = false, error = "This piece cannot be removed" });
+                        return;
+                    }
+
+                    var wnt = target.GetComponent<WearNTear>();
+                    if (wnt != null)
+                        wnt.Remove();
+                    else
+                        ZNetScene.instance.Destroy(target);
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = $"Removed {piece.gameObject.name}"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
