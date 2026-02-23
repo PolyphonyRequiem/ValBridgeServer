@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Lib.GAB.Tools;
+using UnityEngine;
+using ValBridgeServer;
 
 namespace ValBridgeServer.Tools
 {
@@ -33,6 +39,163 @@ namespace ValBridgeServer.Tools
                 success = true,
                 position = new { x = pos.x, y = pos.y, z = pos.z }
             };
+        }
+
+        [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
+        public object FindNearbyPrefabs(
+            [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
+            [ToolParameter(Description = "Search radius in meters (default 30)")] float range = 30f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+            var playerPos = player.transform.position;
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var colliders = Physics.OverlapSphere(playerPos, range);
+                    var filter = prefabName.ToLowerInvariant();
+                    var seen = new HashSet<int>();
+                    var results = new List<(float dist, object data)>();
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+
+                        // Walk up to find the root prefab instance
+                        var go = col.gameObject;
+                        var root = go.transform.root.gameObject;
+
+                        // Check both the hit object and its root
+                        GameObject? match = null;
+                        if (root.name.ToLowerInvariant().Contains(filter))
+                            match = root;
+                        else if (go.name.ToLowerInvariant().Contains(filter))
+                            match = go;
+
+                        if (match == null) continue;
+
+                        var id = match.GetInstanceID();
+                        if (!seen.Add(id)) continue;
+
+                        var pos = match.transform.position;
+                        var dist = Vector3.Distance(playerPos, pos);
+
+                        // Detect interactable type
+                        string? type = null;
+                        if (match.GetComponent<TreeBase>() != null)
+                            type = "TreeBase";
+                        else if (match.GetComponent<Destructible>() != null)
+                            type = "Destructible";
+                        else if (match.GetComponent<TreeLog>() != null)
+                            type = "TreeLog";
+                        else if (match.GetComponent<MineRock>() != null)
+                            type = "MineRock";
+                        else if (match.GetComponent<Character>() != null)
+                            type = "Character";
+
+                        results.Add((dist, new
+                        {
+                            name = match.name,
+                            instanceId = id,
+                            position = new { x = pos.x, y = pos.y, z = pos.z },
+                            distance = (float)Math.Round(dist, 2),
+                            type
+                        }));
+                    }
+
+                    var sorted = results
+                        .OrderBy(r => r.dist)
+                        .Select(r => r.data)
+                        .ToList();
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        count = sorted.Count,
+                        playerPosition = new { x = playerPos.x, y = playerPos.y, z = playerPos.z },
+                        range,
+                        prefabs = sorted
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("attack_target", Description = "Attack a target with the current weapon until destroyed. Use find_nearby_prefabs to get instanceId.")]
+        public object AttackTarget(
+            [ToolParameter(Description = "Instance ID of the target GameObject (from find_nearby_prefabs)")] int instanceId,
+            [ToolParameter(Description = "Timeout in seconds (default 30)")] float timeout = 30f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    // Find the target GameObject by instance ID using physics overlap
+                    var playerPos = player.transform.position;
+                    var colliders = Physics.OverlapSphere(playerPos, 100f);
+                    var seen = new HashSet<int>();
+                    GameObject? target = null;
+
+                    foreach (var col in colliders)
+                    {
+                        if (col == null) continue;
+                        var root = col.gameObject.transform.root.gameObject;
+                        if (seen.Add(root.GetInstanceID()) && root.GetInstanceID() == instanceId)
+                        {
+                            target = root;
+                            break;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        tcs.SetResult(new { success = false, error = $"No GameObject found with instanceId {instanceId} within range" });
+                        return;
+                    }
+
+                    // Start attacking on the main thread, then bridge the result
+                    var attackTask = AttackManager.Instance.StartAttacking(target, timeout);
+                    attackTask.ContinueWith(t => tcs.TrySetResult(t.Result));
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("navigate_to_position", Description = "Walk the player to a world position using pathfinding. Returns when arrived or on failure.")]
+        public object NavigateToPosition(
+            [ToolParameter(Description = "X coordinate")] float x,
+            [ToolParameter(Description = "Z coordinate")] float z,
+            [ToolParameter(Description = "Timeout in seconds (default 60)")] float timeout = 60f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var target = new Vector3(x, player.transform.position.y, z);
+
+            var task = NavigationManager.Instance.StartNavigation(target, timeout);
+            return task.Result;
         }
     }
 }
