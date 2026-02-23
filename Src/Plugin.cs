@@ -95,6 +95,7 @@ namespace ValBridgeServer
                 // Ensure manager singletons are created on the main thread
                 var _ = NavigationManager.Instance;
                 var __ = AttackManager.Instance;
+                var ___ = MovementManager.Instance;
 
                 // Start listening for GABS connections
                 _server.StartAsync().ContinueWith(task =>

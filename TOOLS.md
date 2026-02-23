@@ -36,6 +36,10 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `unequip_item` | Equipment | Unequip currently equipped item by name |
 | `use_item` | Equipment | Consume food/potion by name |
 | `drop_item` | Equipment | Drop item into world |
+| `move_direction` | Movement | Walk/run in world-space direction for duration |
+| `jump` | Movement | Single jump input |
+| `dodge` | Movement | Dodge roll in direction (i-frames) |
+| `set_crouch` | Movement | Toggle crouch/sneak on or off |
 | `run_command` | Utility | Execute console commands |
 
 ---
@@ -160,7 +164,7 @@ Repair an item at the nearest station.
 4. ~~**State** — `get_player_state`, `get_inventory`~~ DONE
 5. ~~**Interaction** — `interact`, `pickup_nearby`~~ DONE
 6. ~~**Equipment** — `equip_item`, `unequip_item`, `use_item`, `drop_item`~~ DONE
-7. **Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`
+7. ~~**Movement** — `move_direction`, `jump`, `dodge`, `set_crouch`~~ DONE
 8. **Building & Crafting** — lower priority, complex placement/station systems
 
 ## Future Work

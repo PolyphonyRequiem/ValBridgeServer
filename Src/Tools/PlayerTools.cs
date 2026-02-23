@@ -710,6 +710,133 @@ namespace ValBridgeServer.Tools
             return tcs.Task.Result;
         }
 
+        [Tool("move_direction", Description = "Move the player in a world-space direction for a duration. Use forward/back/left/right relative to current look direction, or provide explicit X/Z.")]
+        public object MoveDirection(
+            [ToolParameter(Description = "X component of direction (east/west)")] float x = 0f,
+            [ToolParameter(Description = "Z component of direction (north/south)")] float z = 0f,
+            [ToolParameter(Description = "Duration in seconds (default 1)")] float duration = 1f,
+            [ToolParameter(Description = "Run instead of walk (default false)")] bool run = false)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var dir = new Vector3(x, 0f, z);
+            if (dir.magnitude < 0.01f)
+                return new { success = false, error = "Direction vector is zero" };
+
+            var task = MovementManager.Instance.StartMoving(dir, run, duration);
+            return task.Result;
+        }
+
+        [Tool("jump", Description = "Make the player jump. Set move direction first for a directional jump.")]
+        public object Jump()
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    player.Jump();
+                    tcs.SetResult(new { success = true, message = "Jump initiated" });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("dodge", Description = "Dodge roll in a direction. Costs stamina and grants brief invincibility.")]
+        public object Dodge(
+            [ToolParameter(Description = "X component of dodge direction")] float x = 0f,
+            [ToolParameter(Description = "Z component of dodge direction")] float z = 0f)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var dir = new Vector3(x, 0f, z);
+                    if (dir.magnitude < 0.01f)
+                        dir = -player.GetLookDir(); // default: dodge backward
+
+                    dir.Normalize();
+                    player.SetMoveDir(dir);
+                    player.SetControls(
+                        dir,
+                        attack: false, attackHold: false,
+                        secondaryAttack: false, secondaryAttackHold: false,
+                        block: true, blockHold: true,
+                        jump: true,
+                        crouch: false, run: false, autoRun: false);
+
+                    tcs.SetResult(new { success = true, message = "Dodge initiated" });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
+        [Tool("set_crouch", Description = "Toggle crouching/sneaking on or off.")]
+        public object SetCrouch(
+            [ToolParameter(Description = "true to crouch, false to stand")] bool active)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null)
+                return new { success = false, error = "No local player found" };
+
+            var tcs = new TaskCompletionSource<object>();
+
+            MainThreadDispatcher.Instance.Enqueue(() =>
+            {
+                try
+                {
+                    var isCrouching = player.IsCrouching();
+                    if (active != isCrouching)
+                    {
+                        // SetControls with crouch=true toggles the state
+                        player.SetControls(
+                            Vector3.zero,
+                            attack: false, attackHold: false,
+                            secondaryAttack: false, secondaryAttackHold: false,
+                            block: false, blockHold: false,
+                            jump: false, crouch: true,
+                            run: false, autoRun: false);
+                    }
+
+                    tcs.SetResult(new
+                    {
+                        success = true,
+                        message = active ? "Now crouching" : "Stopped crouching",
+                        isCrouching = active
+                    });
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetResult(new { success = false, error = ex.Message });
+                }
+            });
+
+            return tcs.Task.Result;
+        }
+
         [Tool("find_nearby_prefabs", Description = "Find prefab instances near the player by name. Useful for locating trees, rocks, enemies, and other world objects within range.")]
         public object FindNearbyPrefabs(
             [ToolParameter(Description = "Prefab name to search for (partial match, case-insensitive). E.g. 'Beech', 'Rock', 'Boar'")] string prefabName,
