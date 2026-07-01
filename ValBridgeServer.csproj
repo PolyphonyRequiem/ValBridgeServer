@@ -34,6 +34,13 @@
     <!-- NuGet Packages -->
     <ItemGroup>
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+        <!-- Publicizes the Valheim game assemblies at BUILD TIME into obj/ (touches
+             no on-disk DLL). The upstream fork was authored against *_publicized.dll;
+             this restores that access model — e.g. Player.m_buildPieces in place_piece
+             (PlayerTools.cs) — on a box whose ~/valheim-managed assemblies ship NON-
+             publicized. The game References tagged Publicize="true" in Environment.props
+             get a private-stripped copy injected only for compilation. -->
+        <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.3" PrivateAssets="all" />
     </ItemGroup>
 
     <!-- Local DLL References -->

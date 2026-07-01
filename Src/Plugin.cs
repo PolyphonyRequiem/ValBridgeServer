@@ -59,6 +59,7 @@ namespace ValBridgeServer
                 _server.Tools.RegisterToolsFromInstance(new PlayerTools());
                 _server.Tools.RegisterToolsFromInstance(new ZNetSceneTools());
                 _server.Tools.RegisterToolsFromInstance(new TerminalTools());
+                _server.Tools.RegisterToolsFromInstance(new ScreenshotTools());
 
                 // Register event channels
                 _server.Events.RegisterChannel("player/death", "Player death events");
