@@ -23,28 +23,38 @@ namespace ValBridgeServer.Tools
     ///     absent by construction, since overlay canvases aren't part of any camera's
     ///     render.
     ///
-    /// Both downscale to ~1100px longest edge by default (multi-MB PNGs trip HTTP 413
-    /// on the way into chat). MUST run on the GPU client; a -nographics server renders
-    /// every shader as InternalErrorShader (pink) and is effectively pixel-blind.
+    /// Both downscale to ~1100px longest edge by default AND encode to JPEG (quality 85)
+    /// so the result is chat-safe at the source — a lossless PNG of a detailed map frame
+    /// is 1-2 MB and trips HTTP 413 on the way into chat/vision; JPEG q85 is ~7-8x smaller
+    /// with no meaningful quality loss for reading a map. Pass an outputPath ending in
+    /// ".png" to force lossless PNG instead (e.g. pixel-precise defect inspection, where
+    /// JPEG chroma subsampling could soften a thin magenta InternalErrorShader tell). MUST
+    /// run on the GPU client; a -nographics server renders every shader as
+    /// InternalErrorShader (pink) and is effectively pixel-blind.
     /// </summary>
     public class ScreenshotTools
     {
         private const int DefaultMaxEdge = 1100;
         private const int MaxAllowedEdge = 2160;
+        private const int DefaultJpegQuality = 85;
 
         [Tool("capture_screenshot", Description =
-            "Capture what the player currently sees on the GPU client and save it as a PNG on the game host; " +
-            "returns the absolute file path and dimensions. includeUi=true (default) captures the full composited " +
-            "screen WITH overlay UI — HUD, minimap, and the FULL MAP (needed to inspect map mods). includeUi=false " +
-            "captures the 3D camera only with NO UI — a clean frame for inspecting custom geometry/art without HUD " +
-            "occlusion (the map is NOT visible in this mode). Downscaled to ~1100px longest edge by default so it fits chat.")]
+            "Capture what the player currently sees on the GPU client and save it to the game host; " +
+            "returns the absolute file path, dimensions, and format. Defaults to JPEG (quality 85) so the frame " +
+            "is small enough to deliver into chat/vision (a lossless PNG map frame is multi-MB and trips HTTP 413). " +
+            "includeUi=true (default) captures the full composited screen WITH overlay UI — HUD, minimap, and the " +
+            "FULL MAP (needed to inspect map mods). includeUi=false captures the 3D camera only with NO UI — a clean " +
+            "frame for inspecting custom geometry/art without HUD occlusion (the map is NOT visible in this mode). " +
+            "Downscaled to ~1100px longest edge by default. Pass an outputPath ending in \".png\" to force lossless PNG.")]
         public object CaptureScreenshot(
             [ToolParameter(Description = "Longest-edge pixel size of the output (default 1100, max 2160). Aspect ratio is preserved.")] int maxEdge = DefaultMaxEdge,
             [ToolParameter(Description = "true (default) = full composited screen WITH overlay UI (HUD, minimap, full map). false = 3D camera only, NO UI (clean geometry; map not shown).")] bool includeUi = true,
-            [ToolParameter(Description = "Optional absolute output path. Defaults to a timestamped file under the system temp dir.")] string? outputPath = null)
+            [ToolParameter(Description = "JPEG quality 1-100 (default 85). Ignored when the output is PNG (outputPath ending in .png).")] int quality = DefaultJpegQuality,
+            [ToolParameter(Description = "Optional absolute output path. Extension decides format: .png = lossless PNG, otherwise JPEG. Defaults to a timestamped .jpg under the system temp dir.")] string? outputPath = null)
         {
             var tcs = new TaskCompletionSource<object>();
             int edge = Mathf.Clamp(maxEdge <= 0 ? DefaultMaxEdge : maxEdge, 16, MaxAllowedEdge);
+            int q = Mathf.Clamp(quality <= 0 ? DefaultJpegQuality : quality, 1, 100);
             string path = ResolvePath(outputPath);
 
             if (includeUi)
@@ -55,7 +65,7 @@ namespace ValBridgeServer.Tools
                 {
                     try
                     {
-                        MainThreadDispatcher.Instance.StartCoroutine(CaptureCompositedAtEndOfFrame(edge, path, tcs));
+                        MainThreadDispatcher.Instance.StartCoroutine(CaptureCompositedAtEndOfFrame(edge, q, path, tcs));
                     }
                     catch (Exception ex)
                     {
@@ -66,23 +76,23 @@ namespace ValBridgeServer.Tools
             else
             {
                 // Camera-only path is synchronous and valid from Update().
-                MainThreadDispatcher.Instance.Enqueue(() => CaptureCameraOnly(edge, path, tcs));
+                MainThreadDispatcher.Instance.Enqueue(() => CaptureCameraOnly(edge, q, path, tcs));
             }
 
             return tcs.Task.Result;
         }
 
         // ── includeUi = true : composited screen incl. overlay UI ────────────────────
-        private IEnumerator CaptureCompositedAtEndOfFrame(int edge, string path, TaskCompletionSource<object> tcs)
+        private IEnumerator CaptureCompositedAtEndOfFrame(int edge, int quality, string path, TaskCompletionSource<object> tcs)
         {
             // Must wait until the frame (world + all overlay canvases) is fully drawn.
             // Keep the yield OUT of any try/catch — C# forbids `yield` inside a try that
             // has a catch clause.
             yield return new WaitForEndOfFrame();
-            DoCompositedCapture(edge, path, tcs);
+            DoCompositedCapture(edge, quality, path, tcs);
         }
 
-        private void DoCompositedCapture(int edge, string path, TaskCompletionSource<object> tcs)
+        private void DoCompositedCapture(int edge, int quality, string path, TaskCompletionSource<object> tcs)
         {
             Texture2D? full = null;
             Texture2D? scaled = null;
@@ -115,15 +125,16 @@ namespace ValBridgeServer.Tools
                     outTex = scaled;
                 }
 
-                byte[] png = ImageConversion.EncodeToPNG(outTex);
-                File.WriteAllBytes(path, png);
+                byte[] data = Encode(outTex, path, quality, out string format);
+                File.WriteAllBytes(path, data);
                 tcs.SetResult(new
                 {
                     success = true,
                     path,
                     width = outTex.width,
                     height = outTex.height,
-                    bytes = png.Length,
+                    bytes = data.Length,
+                    format,
                     includeUi = true
                 });
             }
@@ -141,7 +152,7 @@ namespace ValBridgeServer.Tools
         }
 
         // ── includeUi = false : 3D camera only, no overlay UI ────────────────────────
-        private void CaptureCameraOnly(int edge, string path, TaskCompletionSource<object> tcs)
+        private void CaptureCameraOnly(int edge, int quality, string path, TaskCompletionSource<object> tcs)
         {
             RenderTexture? rt = null;
             RenderTexture? prevActive = null;
@@ -181,15 +192,16 @@ namespace ValBridgeServer.Tools
                 RenderTexture.active = prevActive;
                 prevActive = null;
 
-                byte[] png = ImageConversion.EncodeToPNG(tex);
-                File.WriteAllBytes(path, png);
+                byte[] data = Encode(tex, path, quality, out string format);
+                File.WriteAllBytes(path, data);
                 tcs.SetResult(new
                 {
                     success = true,
                     path,
                     width = outW,
                     height = outH,
-                    bytes = png.Length,
+                    bytes = data.Length,
+                    format,
                     includeUi = false,
                     camera = cam.name
                 });
@@ -207,6 +219,26 @@ namespace ValBridgeServer.Tools
         }
 
         // ── helpers ──────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Encode by the output path's extension: ".png" → lossless PNG, anything else
+        /// (including the ".jpg" default) → JPEG at the given quality. Uses an out-param
+        /// for the format tag to match this file's existing out-style and avoid any
+        /// net48 ValueTuple ambiguity. EncodeToJPG lives in the same ImageConversionModule
+        /// as EncodeToPNG, so no extra assembly reference is needed.
+        /// </summary>
+        private static byte[] Encode(Texture2D tex, string path, int quality, out string format)
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext == ".png")
+            {
+                format = "png";
+                return ImageConversion.EncodeToPNG(tex);
+            }
+            format = "jpg";
+            return ImageConversion.EncodeToJPG(tex, quality);
+        }
+
         private static void ComputeOut(int srcW, int srcH, int edge, out int outW, out int outH)
         {
             float aspect = (float)srcW / Mathf.Max(1, srcH);
@@ -219,7 +251,7 @@ namespace ValBridgeServer.Tools
         private static string ResolvePath(string? outputPath)
         {
             string path = string.IsNullOrWhiteSpace(outputPath)
-                ? Path.Combine(Path.GetTempPath(), $"valheim_capture_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png")
+                ? Path.Combine(Path.GetTempPath(), $"valheim_capture_{DateTime.Now:yyyyMMdd_HHmmss_fff}.jpg")
                 : outputPath!;
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
