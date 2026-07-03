@@ -49,6 +49,14 @@
             <HintPath>lib/Lib.GAB.dll</HintPath>
             <Private>true</Private>
         </Reference>
+        <!-- Mono.CSharp runtime C# evaluator (UnityExplorer's engine, standalone).
+             Stock editor build v4.0.0.0 (PKT 0738eb9f132ed756), net4x. The game's
+             Mono runtime does NOT ship this, so Private=true => copies to output and
+             MUST be deployed alongside ValBridgeServer.dll. Powers ScriptTools.run_script. -->
+        <Reference Include="Mono.CSharp">
+            <HintPath>lib/Mono.CSharp.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
     </ItemGroup>
 
 </Project>
