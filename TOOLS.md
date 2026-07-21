@@ -45,6 +45,7 @@ Enable an AI model to play Valheim by exposing a set of primitive tools that mir
 | `place_piece` | Building | Place building piece at position/rotation |
 | `remove_piece` | Building | Demolish building piece by instanceId |
 | `run_command` | Utility | Execute console commands |
+| `get_steam_session_state` | Identity | Authoritative in-process Steamworks readiness/identity probe (SteamID64, BLoggedOn, Valheim 892970 subscription, app owner, family-sharing). Fails closed. Menu + in-world. |
 
 ---
 

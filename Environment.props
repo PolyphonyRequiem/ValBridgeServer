@@ -108,6 +108,14 @@
             <HintPath>$(VALHEIM_MANAGED)/assembly_utils.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- Steamworks.NET (com.rlabrecque.steamworks.net) — third-party MIT-licensed managed
+             wrapper around the Steamworks flat API, shipped in Valheim's Managed folder. Used by
+             SteamSessionTools for the authoritative in-process identity/readiness probe. Not
+             publicized (public facade only) and Private=false: the game already ships/loads it. -->
+        <Reference Include="com.rlabrecque.steamworks.net">
+            <HintPath>$(VALHEIM_MANAGED)/com.rlabrecque.steamworks.net.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
     </ItemGroup>
 
 </Project>

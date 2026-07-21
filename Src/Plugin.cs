@@ -39,6 +39,7 @@ namespace ValBridgeServer
         public void Start()
         {
             ModLogger.LogInfo($"{ModName} v{ModVersion} is loading...");
+            StartupSceneActivationGuard.Install();
 
             try
             {
@@ -63,6 +64,7 @@ namespace ValBridgeServer
                 _server.Tools.RegisterToolsFromInstance(new MenuTools());
                 _server.Tools.RegisterToolsFromInstance(new MapTools());
                 _server.Tools.RegisterToolsFromInstance(new ScriptTools());
+                _server.Tools.RegisterToolsFromInstance(new SteamSessionTools());
 
                 // Register event channels
                 _server.Events.RegisterChannel("player/death", "Player death events");
