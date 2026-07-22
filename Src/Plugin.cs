@@ -39,6 +39,7 @@ namespace ValBridgeServer
         public void Start()
         {
             ModLogger.LogInfo($"{ModName} v{ModVersion} is loading...");
+            StartupSceneActivationGuard.Install();
 
             try
             {
@@ -59,6 +60,11 @@ namespace ValBridgeServer
                 _server.Tools.RegisterToolsFromInstance(new PlayerTools());
                 _server.Tools.RegisterToolsFromInstance(new ZNetSceneTools());
                 _server.Tools.RegisterToolsFromInstance(new TerminalTools());
+                _server.Tools.RegisterToolsFromInstance(new ScreenshotTools());
+                _server.Tools.RegisterToolsFromInstance(new MenuTools());
+                _server.Tools.RegisterToolsFromInstance(new MapTools());
+                _server.Tools.RegisterToolsFromInstance(new ScriptTools());
+                _server.Tools.RegisterToolsFromInstance(new SteamSessionTools());
 
                 // Register event channels
                 _server.Events.RegisterChannel("player/death", "Player death events");
@@ -67,6 +73,7 @@ namespace ValBridgeServer
                 // Ensure manager singletons are created on the main thread
                 var _ = NavigationManager.Instance;
                 var ___ = MovementManager.Instance;
+                var ____ = MenuManager.Instance;
 
                 // Start listening for GABS connections
                 _server.StartAsync().ContinueWith(task =>
